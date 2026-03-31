@@ -1,0 +1,7 @@
+git-*
+.vs
+*.user
+x64
+Debug*
+Release*
+MPAWitMo.*
