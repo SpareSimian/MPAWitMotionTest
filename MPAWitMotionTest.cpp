@@ -255,10 +255,10 @@ static void autobaud()
       const bool baudRateSupported = g_port->setBaudRate(testBaud);
       if (!baudRateSupported)
       {
-         std::cout << " not supported\n";
+         std::cout << " not supported" << std::endl;
          continue;
       }
-      std::cout << '\n';
+      std::cout << std::endl;
       int iRetry = 2;
       do
       {
@@ -276,7 +276,7 @@ static void autobaud()
                WitSetUartBaud(WIT_BAUD_230400);
                sleepMS(100);
                g_port->setBaudRate(desiredBPS);
-               std::cout << "speed set to 230400\n";
+               std::cout << "speed set to 230400" << std::endl;
             }
             return;
          }
@@ -322,7 +322,7 @@ int main(int argc, const char* argv[])
          throw std::runtime_error("failed to open output file for writing");
       of << "AX,AY,AZ"; // first sample will append the newline
       g_port = &port; // for callbacks
-      std::cout << "opening serial port successful\n";
+      std::cout << "opening serial port successful" << std::endl;
       port.setLowLatency();
       WitInit(WIT_PROTOCOL_MODBUS, 0x50);
       WitSerialWriteRegister(onWrite); // register the routine to submit commands
@@ -335,7 +335,7 @@ int main(int argc, const char* argv[])
       sleepMS(100);
       WitSetOutputRate(RRATE_200HZ);
       sleepMS(100);
-      std::cout << "Hit a key to end data collection.\n";
+      std::cout << "Hit a key to end data collection." << std::endl;
       const HiResTimer::timepoint startTime = HiResTimer::nowInTicks();
       requestCount = 0;
       requeueRequest = true; // queue another erquest when a response arrives
@@ -357,9 +357,9 @@ int main(int argc, const char* argv[])
       while ((samples.size() != requestCount) && (g_timer.elapsedInTicksSince(startWaitForEmpty) < durationTicksWaitForEmpty))
          receiveData(port);
       WitDeInit();
-      const double elapsed = g_timer.elapsedInMillisecondsSince(startTime);
-      const double millisecondsPerSample = elapsed / samples.size();
-      std::cout << samples.size() << " samples collected in " << elapsed / 1000000.0 << " seconds from " << requestCount << " requests,\n";
+      const double elapsedMS = g_timer.elapsedInMillisecondsSince(startTime);
+      const double millisecondsPerSample = elapsedMS / samples.size();
+      std::cout << samples.size() << " samples collected in " << elapsedMS << " msecs from " << requestCount << " requests,\n";
       const double packetRate = 1000.0 / millisecondsPerSample;
       const double bitRate = packetRate * packetTotalSizeBits;
       std::cout << millisecondsPerSample << " msecs/sample, " << packetRate << " samples/second, " << bitRate << " bps\n";
