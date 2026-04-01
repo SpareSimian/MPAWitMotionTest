@@ -210,6 +210,12 @@ static int isValidModbusSoFar()
    return 1; // valid so far
 }
 
+static consumeBufferCharacter()
+{
+   memcpy(s_ucWitDataBuff, &s_ucWitDataBuff[1], s_uiWitDataCnt);
+   --s_uiWitDataCnt;
+}
+
 void WitSerialDataIn(uint8_t ucData)
 {
     uint16_t usTemp, i, usData[4];
@@ -223,8 +229,7 @@ void WitSerialDataIn(uint8_t ucData)
         // full buffer, set a breakpoint here, could be noise from
         // autobaud, dump oldest byte and retry
         WitDebugLog("Wit full buffer");
-        memcpy(s_ucWitDataBuff, &s_ucWitDataBuff[1], s_uiWitDataCnt);
-        --s_uiWitDataCnt;
+        consumeBufferCharacter();
     }
     s_ucWitDataBuff[s_uiWitDataCnt++] = ucData;
     switch(s_uiProtoclo)
@@ -233,8 +238,7 @@ void WitSerialDataIn(uint8_t ucData)
         case WIT_PROTOCOL_NORMAL:
             if(s_ucWitDataBuff[0] != 0x55)
             {
-                s_uiWitDataCnt--;
-                memcpy(s_ucWitDataBuff, &s_ucWitDataBuff[1], s_uiWitDataCnt);
+                consumeBufferCharacter();
                 return ;
             }
             if(s_uiWitDataCnt >= 11)
@@ -242,8 +246,7 @@ void WitSerialDataIn(uint8_t ucData)
                 ucSum = __CaliSum(s_ucWitDataBuff, 10);
                 if(ucSum != s_ucWitDataBuff[10])
                 {
-                    s_uiWitDataCnt--;
-                    memcpy(s_ucWitDataBuff, &s_ucWitDataBuff[1], s_uiWitDataCnt);
+                    consumeBufferCharacter();
                     return ;
                 }
                 usData[0] = ((uint16_t)s_ucWitDataBuff[3] << 8) | (uint16_t)s_ucWitDataBuff[2];
@@ -257,8 +260,8 @@ void WitSerialDataIn(uint8_t ucData)
         case WIT_PROTOCOL_905x_MODBUS:
         case WIT_PROTOCOL_MODBUS:
            while((s_uiWitDataCnt > 0) && (0 == (valid = isValidModbusSoFar())))
-              // shift to drop the oldest byte and try again
-              memcpy(s_ucWitDataBuff, &s_ucWitDataBuff[1], s_uiWitDataCnt);
+               // drop the oldest byte and try again
+               consumeBufferCharacter();
            if (1 == valid)
               break; // packet is good so far but not complete
            if (2 == valid) // packet is complete with good CRC

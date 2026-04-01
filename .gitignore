@@ -1,7 +1,11 @@
+# output of git commands like status and diff
 git-*
+# development temporary and output files
 .vs
 *.user
 x64
 Debug*
 Release*
 MPAWitMo.*
+# program output
+*.log

@@ -10,6 +10,8 @@
 #include "wit_c_sdk.h"
 #include "REG.h"
 
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
 // Change scheduler tick. Tell Windows to wake us up within a
 // millisecond.
 #pragma comment(lib, "winmm.lib") // for timeBeginPeriod/timeEndPeriod
@@ -19,6 +21,99 @@ public:
    LowLatency() { timeBeginPeriod(1); }
    ~LowLatency() { timeEndPeriod(1); }
 };
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+class HiResTimer
+{
+public:
+   typedef std::uint64_t timepoint;
+   typedef std::int64_t duration;
+   HiResTimer();
+   static timepoint nowInTicks();
+   double nowInMicrosecondsd() const;
+   double nowInMillisecondsd() const;
+   // conversion is subject to overflow, so use on durations, not on absolute time!
+   // convert durations to/from human values
+   double ticksToMicroseconds(duration ticks) const;
+   double ticksToMilliseconds(duration ticks) const;
+   duration microsecondsToTicks(duration microseconds) const;
+   duration millisecondsToTicks(double milliseconds) const;
+   // convenience functions, must be within 2^63 of reference time
+   double elapsedInMicrosecondsSince(const timepoint& ticksStart) const;
+   double elapsedInMillisecondsSince(const timepoint& ticksStart) const;
+   static duration elapsedInTicksSince(const timepoint& ticksStart);
+   void busySleep(double durationMilliseconds) const;
+private:
+   timepoint ticksPerSecond;
+};
+
+HiResTimer::HiResTimer()
+{
+   LARGE_INTEGER frequency;
+   QueryPerformanceFrequency(&frequency);
+   ticksPerSecond = frequency.QuadPart;
+   if (0 == ticksPerSecond)
+      throw std::runtime_error("QueryPerformanceFrequency returned 0");
+}
+
+HiResTimer::timepoint HiResTimer::nowInTicks()
+{
+   LARGE_INTEGER performanceCount;
+   QueryPerformanceCounter(&performanceCount);
+   return performanceCount.QuadPart;
+}
+
+double HiResTimer::nowInMicrosecondsd() const
+{
+   return ticksToMicroseconds(nowInTicks());
+}
+
+double HiResTimer::nowInMillisecondsd() const
+{
+   return ticksToMilliseconds(nowInTicks());
+}
+
+double HiResTimer::ticksToMicroseconds(HiResTimer::duration ticks) const
+{
+   return 1000000.0 * ticks / ticksPerSecond;
+}
+
+double HiResTimer::ticksToMilliseconds(HiResTimer::duration ticks) const
+{
+   return 1000.0 * ticks / ticksPerSecond;
+}
+
+HiResTimer::duration HiResTimer::millisecondsToTicks(double milliseconds) const
+{
+   return (duration) (ticksPerSecond * milliseconds / 1000.0);
+}
+
+HiResTimer::duration HiResTimer::elapsedInTicksSince(const HiResTimer::timepoint& ticksStart)
+{
+   return nowInTicks() - ticksStart;
+}
+
+double HiResTimer::elapsedInMicrosecondsSince(const HiResTimer::timepoint& ticksStart) const
+{
+   return ticksToMicroseconds(nowInTicks() - ticksStart);
+}
+
+// returns fractional milliseconds
+double HiResTimer::elapsedInMillisecondsSince(const HiResTimer::timepoint& ticksStart) const
+{
+   return elapsedInMicrosecondsSince(ticksStart) / 1000.0;
+}
+
+void HiResTimer::busySleep(double durationMilliseconds) const
+{
+   const duration durationTicks = millisecondsToTicks(durationMilliseconds);
+   const HiResTimer::timepoint startTime = HiResTimer::nowInTicks();
+   while (HiResTimer::elapsedInTicksSince(startTime) < durationTicks)
+      ;
+}
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
 class SerialPort
 {
@@ -115,25 +210,36 @@ void SerialPort::throwCommError(const std::string& api)
    throw std::runtime_error(message);
 }
 
-SerialPort* g_port = NULL; // for Wit callbacks
-bool sampleReceived = false; // for autobaud, means we got a coherent reply with good checksum
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
-void onWrite(std::uint8_t *p_ucData, std::uint32_t uiLen)
+static HiResTimer g_timer;
+static SerialPort* g_port = NULL; // for Wit callbacks
+static bool sampleReceived = false; // for autobaud, means we got a coherent reply with good checksum
+
+static void onWrite(std::uint8_t *p_ucData, std::uint32_t uiLen)
 {
    g_port->write(p_ucData, uiLen);
 }
 
-void requestSample()
+static void requestSample()
 {
    WitReadReg(AX,3); // request data from device, accel, 3 axes
 }
 
-void sleepMS(std::uint16_t ucMs)
+static void sleepMS(std::uint16_t ucMs)
 {
    std::this_thread::sleep_for(std::chrono::milliseconds(ucMs));
 }
 
-void autobaud()
+static void receiveData(SerialPort& port)
+{
+   std::uint8_t buffer[256];
+   const std::size_t bytes_read = port.read(buffer, (DWORD)sizeof buffer);
+   for (unsigned i = 0; i < bytes_read; i++)
+      WitSerialDataIn(buffer[i]);
+}
+
+static void autobaud()
 {
    // attempt highest first, assuming we already set it on earlier run
    static const std::vector<unsigned> c_uiBaud { 230400, 4800, 9600, 19200, 38400, 57600, 115200 /*,460800*/};
@@ -152,7 +258,10 @@ void autobaud()
       do
       {
          requestSample();
-         sleepMS(100); // allow time for reply
+         HiResTimer::duration durationTicks = g_timer.millisecondsToTicks(1000);
+         HiResTimer::timepoint startTime = g_timer.nowInTicks();
+         while (g_timer.elapsedInTicksSince(startTime) < durationTicks)
+            receiveData(*g_port);
          if (sampleReceived)
          {
             std::cout << "device found at baud " << testBaud << '\n';
@@ -176,7 +285,7 @@ typedef std::vector<std::int16_t> Sample; // array of registers
 typedef std::vector<Sample> Samples; // array of samples
 static Samples samples;
 
-void onReply(std::uint32_t uiReg, std::uint32_t uiRegNum)
+static void onReply(std::uint32_t uiReg, std::uint32_t uiRegNum)
 {
    // Called when sReg is updated. uiReg is first register index,
    // uiRegNum is how many. Global sReg has the list of all registers.
@@ -198,6 +307,7 @@ int main(int argc, const char* argv[])
       std::ofstream of(argv[2]);
       if (!of.is_open())
          throw std::runtime_error("failed to open output file for writing");
+      of << "AX,AY,AZ"; // first sample will append the newline
       g_port = &port; // for callbacks
       std::cout << "opening serial port successful\n";
       port.setLowLatency();
@@ -208,26 +318,33 @@ int main(int argc, const char* argv[])
       autobaud(); // requires singleton to use static callbacks!
       WitSetBandwidth(BANDWIDTH_256HZ);
       WitSetOutputRate(RRATE_200HZ);
+      std::cout << "Hit a key to end data collection.\n";
+      const HiResTimer::timepoint startTime = HiResTimer::nowInTicks();
+      requestSample();
       while (!_kbhit())
-      {
-         std::uint8_t buffer[256];
-         const std::size_t bytes_read = port.read(buffer, (DWORD)sizeof buffer);
-         for (unsigned i = 0; i < bytes_read; i++)
-            WitSerialDataIn(buffer[i]);
-      }
+         receiveData(port); // pump the message processor
       WitDeInit();
+      const double elapsed = g_timer.elapsedInMicrosecondsSince(startTime);
+      const double microsecondsPerSample = elapsed / samples.size();
+      constexpr unsigned packetSizeBytes = 5 + 2 * 3; // address, function, register count, registers (2 bytes each), 2-byte CRC
+      constexpr unsigned packetSizeBits = 10 * packetSizeBytes; // includes start and stop bits
+      std::cout << samples.size() << " samples collected in " << elapsed / 1000000.0 << " seconds,\n";
+      const double packetRate = 1000000.0 / microsecondsPerSample;
+      const double bitRate = packetRate * packetSizeBits;
+      std::cout << microsecondsPerSample << " usecs/sample, " << packetRate << " samples/second, " << bitRate << " bps\n";
       g_port = NULL; // catch any late attempts to use this pointer
       // dump the samples
       for (Samples::const_iterator p = samples.begin(); p != samples.end(); ++p)
       {
+         of << '\n';
          for (Sample::const_iterator q = p->begin(); q != p->end(); ++q)
          {
-            of << *q;
-            if (p->begin() != q)
+            if (p->begin() != q) 
                of << ',';
+            of << *q;
          }
-         of << '\n';
       }
+      of << '\n';
       Samples().swap(samples); // release memory by swapping with an empty vector
       return 0;
    }
