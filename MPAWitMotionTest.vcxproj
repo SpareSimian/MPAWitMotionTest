@@ -24,6 +24,7 @@
     <ProjectGuid>{5b9b2f72-ef36-4164-8ffe-25cf5ff1823e}</ProjectGuid>
     <RootNamespace>MPAWitMotionTestProgram</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <ProjectName>MPAWitMotionTest</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
@@ -123,7 +124,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="MPAWitMotionTestProgram.cpp" />
+    <ClCompile Include="MPAWitMotionTest.cpp" />
     <ClCompile Include="wit_c_sdk.c" />
   </ItemGroup>
   <ItemGroup>

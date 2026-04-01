@@ -15,7 +15,7 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="MPAWitMotionTestProgram.cpp">
+    <ClCompile Include="MPAWitMotionTest.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="wit_c_sdk.c">
