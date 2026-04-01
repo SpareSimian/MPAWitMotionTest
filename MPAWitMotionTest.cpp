@@ -329,17 +329,25 @@ int main(int argc, const char* argv[])
       WitRegisterCallBack(onReply); // register to handle response
       WitDelayMsRegister(sleepMS); // register delay function
       autobaud(); // requires singleton to use static callbacks!
+      // sleeps here are in case device needs time to process settings changes
+      sleepMS(100);
       WitSetBandwidth(BANDWIDTH_256HZ);
+      sleepMS(100);
       WitSetOutputRate(RRATE_200HZ);
+      sleepMS(100);
       std::cout << "Hit a key to end data collection.\n";
       const HiResTimer::timepoint startTime = HiResTimer::nowInTicks();
       requestCount = 0;
       requeueRequest = true; // queue another erquest when a response arrives
       requestSample();
-      // queue another sample, allowing first to go out and with some delay
-      constexpr double bitTimeMS = 1000.0 / desiredBPS;
-      g_timer.busySleep(bitTimeMS * packetReadSizeBits * 2.0);
-      requestSample();
+      //for (unsigned i = 0; i < 2; ++i)
+      {
+         // queue additional requests, allowing first to go out and with some delay,
+         // to take advantage of full duplex
+         constexpr double bitTimeMS = 1000.0 / desiredBPS;
+         g_timer.busySleep(bitTimeMS * packetReadSizeBits * 2.0);
+         requestSample();
+      }
       while (!_kbhit())
          receiveData(port); // pump the message processor
       requeueRequest = false; // stop automatic requests
@@ -349,12 +357,12 @@ int main(int argc, const char* argv[])
       while ((samples.size() != requestCount) && (g_timer.elapsedInTicksSince(startWaitForEmpty) < durationTicksWaitForEmpty))
          receiveData(port);
       WitDeInit();
-      const double elapsed = g_timer.elapsedInMicrosecondsSince(startTime);
-      const double microsecondsPerSample = elapsed / samples.size();
+      const double elapsed = g_timer.elapsedInMillisecondsSince(startTime);
+      const double millisecondsPerSample = elapsed / samples.size();
       std::cout << samples.size() << " samples collected in " << elapsed / 1000000.0 << " seconds from " << requestCount << " requests,\n";
-      const double packetRate = 1000000.0 / microsecondsPerSample;
+      const double packetRate = 1000.0 / millisecondsPerSample;
       const double bitRate = packetRate * packetTotalSizeBits;
-      std::cout << microsecondsPerSample << " usecs/sample, " << packetRate << " samples/second, " << bitRate << " bps\n";
+      std::cout << millisecondsPerSample << " msecs/sample, " << packetRate << " samples/second, " << bitRate << " bps\n";
       g_port = NULL; // catch any late attempts to use this pointer
       // dump the samples
       for (Samples::const_iterator p = samples.begin(); p != samples.end(); ++p)
