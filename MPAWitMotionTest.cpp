@@ -215,6 +215,8 @@ void SerialPort::throwCommError(const std::string& api)
 static HiResTimer g_timer;
 static SerialPort* g_port = NULL; // for Wit callbacks
 static bool sampleReceived = false; // for autobaud, means we got a coherent reply with good checksum
+static unsigned requestCount = 0;
+static bool requeueRequest = false; // true when streaming
 
 static void onWrite(std::uint8_t *p_ucData, std::uint32_t uiLen)
 {
@@ -224,6 +226,7 @@ static void onWrite(std::uint8_t *p_ucData, std::uint32_t uiLen)
 static void requestSample()
 {
    WitReadReg(AX,3); // request data from device, accel, 3 axes
+   ++requestCount;
 }
 
 static void sleepMS(std::uint16_t ucMs)
@@ -238,6 +241,8 @@ static void receiveData(SerialPort& port)
    for (unsigned i = 0; i < bytes_read; i++)
       WitSerialDataIn(buffer[i]);
 }
+
+constexpr unsigned desiredBPS = 230400;
 
 static void autobaud()
 {
@@ -265,12 +270,12 @@ static void autobaud()
          if (sampleReceived)
          {
             std::cout << "device found at baud " << testBaud << '\n';
-            if (230400 != testBaud)
+            if (desiredBPS != testBaud)
             {
                // try to change the device to fastest speed and see if it worked
                WitSetUartBaud(WIT_BAUD_230400);
                sleepMS(100);
-               g_port->setBaudRate(230400);
+               g_port->setBaudRate(desiredBPS);
                std::cout << "speed set to 230400\n";
             }
             return;
@@ -292,8 +297,16 @@ static void onReply(std::uint32_t uiReg, std::uint32_t uiRegNum)
    sampleReceived = true; // for autobaud logic
    Sample sample { sReg[AX], sReg[AY], sReg[AZ] };
    samples.emplace_back(sample);
-   requestSample();
+   if (requeueRequest)
+      requestSample();
 }
+
+constexpr unsigned packetWriteSizeBytes = 8; // address, function, 1st register (2 bytes), count (2-bytes), 2-byte CRC
+constexpr unsigned packetWriteSizeBits = 10 * packetWriteSizeBytes; // includes start and stop bits
+constexpr unsigned packetReadSizeBytes = 5 + 2 * 3; // address, function, register count, registers (2 bytes each), 2-byte CRC
+constexpr unsigned packetReadSizeBits = 10 * packetReadSizeBytes; // includes start and stop bits
+constexpr unsigned packetTotalSizeBytes = packetWriteSizeBytes + packetReadSizeBytes;
+constexpr unsigned packetTotalSizeBits = packetWriteSizeBits + packetReadSizeBits;
 
 int main(int argc, const char* argv[])
 {
@@ -320,17 +333,27 @@ int main(int argc, const char* argv[])
       WitSetOutputRate(RRATE_200HZ);
       std::cout << "Hit a key to end data collection.\n";
       const HiResTimer::timepoint startTime = HiResTimer::nowInTicks();
+      requestCount = 0;
+      requeueRequest = true; // queue another erquest when a response arrives
+      requestSample();
+      // queue another sample, allowing first to go out and with some delay
+      constexpr double bitTimeMS = 1000.0 / desiredBPS;
+      g_timer.busySleep(bitTimeMS * packetReadSizeBits * 2.0);
       requestSample();
       while (!_kbhit())
          receiveData(port); // pump the message processor
+      requeueRequest = false; // stop automatic requests
+      // wait for inbound queue to drain
+      HiResTimer::duration durationTicksWaitForEmpty = g_timer.millisecondsToTicks(1000);
+      HiResTimer::timepoint startWaitForEmpty = HiResTimer::nowInTicks();
+      while ((samples.size() != requestCount) && (g_timer.elapsedInTicksSince(startWaitForEmpty) < durationTicksWaitForEmpty))
+         receiveData(port);
       WitDeInit();
       const double elapsed = g_timer.elapsedInMicrosecondsSince(startTime);
       const double microsecondsPerSample = elapsed / samples.size();
-      constexpr unsigned packetSizeBytes = 5 + 2 * 3; // address, function, register count, registers (2 bytes each), 2-byte CRC
-      constexpr unsigned packetSizeBits = 10 * packetSizeBytes; // includes start and stop bits
-      std::cout << samples.size() << " samples collected in " << elapsed / 1000000.0 << " seconds,\n";
+      std::cout << samples.size() << " samples collected in " << elapsed / 1000000.0 << " seconds from " << requestCount << " requests,\n";
       const double packetRate = 1000000.0 / microsecondsPerSample;
-      const double bitRate = packetRate * packetSizeBits;
+      const double bitRate = packetRate * packetTotalSizeBits;
       std::cout << microsecondsPerSample << " usecs/sample, " << packetRate << " samples/second, " << bitRate << " bps\n";
       g_port = NULL; // catch any late attempts to use this pointer
       // dump the samples
